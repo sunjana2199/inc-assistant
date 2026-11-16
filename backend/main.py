@@ -1,15 +1,18 @@
-"""FastAPI app and routes for the Database Incident Assistant."""
+"""FastAPI app and routes for the Database Incident Assistant.
+
+All routes live under /api/py so the app can share one Vercel project (and one URL) with the
+Next.js site: Vercel serves this app from api/index.py, and locally Next.js forwards /api/py/*
+to `uvicorn main:app --port 8000`.
+"""
 
 import logging
-import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent / ".env")
 
-from fastapi import Depends, FastAPI, HTTPException  # noqa: E402
-from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi import APIRouter, Depends, FastAPI, HTTPException  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 import chain  # noqa: E402
@@ -18,16 +21,13 @@ from auth import current_user_id  # noqa: E402
 
 log = logging.getLogger("inc-assistant")
 
-app = FastAPI(title="Database Incident Assistant")
-
-origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+PREFIX = "/api/py"
+app = FastAPI(
+    title="Database Incident Assistant",
+    docs_url=f"{PREFIX}/docs",
+    openapi_url=f"{PREFIX}/openapi.json",
 )
+router = APIRouter(prefix=PREFIX)
 
 MAX_QUESTION = 4000
 
@@ -44,28 +44,28 @@ def _owned_session(session_id: str, user_id: str) -> dict:
     return session
 
 
-@app.get("/health")
+@router.get("/health")
 def health():
     return {"status": "ok"}
 
 
-@app.post("/sessions")
+@router.post("/sessions")
 def create_session(user_id: str = Depends(current_user_id)):
     return history.create_session(user_id)
 
 
-@app.get("/sessions")
+@router.get("/sessions")
 def list_sessions(user_id: str = Depends(current_user_id)):
     return history.list_sessions(user_id)
 
 
-@app.get("/sessions/{session_id}/messages")
+@router.get("/sessions/{session_id}/messages")
 def session_messages(session_id: str, user_id: str = Depends(current_user_id)):
     _owned_session(session_id, user_id)
     return history.all_messages(session_id)
 
 
-@app.post("/chat")
+@router.post("/chat")
 def chat(req: ChatRequest, user_id: str = Depends(current_user_id)):
     question = req.question.strip()
     if not 1 <= len(question) <= MAX_QUESTION:
@@ -83,3 +83,6 @@ def chat(req: ChatRequest, user_id: str = Depends(current_user_id)):
     saved = history.save_exchange(session["id"], question, answer)
     history.set_title_if_empty(session, question)
     return {"session_id": session["id"], "answer": answer, "created_at": saved["created_at"]}
+
+
+app.include_router(router)

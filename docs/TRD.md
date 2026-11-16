@@ -9,17 +9,22 @@ The app is a Next.js frontend and a FastAPI backend, with Supabase for auth and 
 | Component | Technology | Job |
 |---|---|---|
 | Frontend | Next.js (React) on Vercel | Landing, login, session list and chat screens |
-| Backend | FastAPI, Python 3.11+ | Validates requests, runs the AI chain, saves messages |
+| Backend | FastAPI, Python 3.11+, on Vercel as a Python function | Validates requests, runs the AI chain, saves messages |
 | AI workflow | LangChain | Prompt template, history and model call |
 | AI model | Gemini via `langchain-google-genai` | Generates the triage answer |
 | Database and auth | Supabase (Postgres) | Users, sessions, messages |
 | Code and deploy source | GitHub | Version history; Vercel deploys from it |
 | Build tool | Claude Code | Reads the PRD and TRD and writes the code |
 
-Repository layout (as built):
+Repository layout (as built). The frontend and backend deploy together as **one Vercel project with one URL**: Next.js serves the pages, and `api/index.py` runs the FastAPI app as a Python function under `/api/py/*`.
 
 ```
 inc-assistant/
+  app/                 # Next.js pages: landing, login, dashboard, chat
+  components/          # shared UI (top bar)
+  lib/api.ts           # calls to the backend (/api/py/*)
+  api/
+    index.py           # Vercel entry point: loads the FastAPI app from backend/
   backend/
     main.py            # FastAPI app and routes
     chain.py           # LangChain prompt and chain
@@ -27,20 +32,19 @@ inc-assistant/
     auth.py            # verify the Supabase token
     db.py              # shared Supabase client (service key)
     wise_context.md    # the database estate document
-    requirements.txt
-  frontend/
-    app/               # landing, login, sessions, chat pages
-    components/        # shared UI (top bar)
-    lib/api.ts         # calls to the backend
   supabase/
     schema.sql         # tables, indexes and row level security
   docs/
     PRD.md
     TRD.md
+  requirements.txt     # Python dependencies
+  package.json         # Node dependencies
+  next.config.ts       # forwards /api/py/* to FastAPI on port 8000 in local development
+  vercel.json          # bundles backend/ into the Python function
   README.md
 ```
 
-**Open question:** where FastAPI runs. The assumption is a second Vercel project for the backend; if that does not work, use another host and keep the frontend on Vercel.
+**Decision (was an open question):** FastAPI runs in the same Vercel project as the frontend, as a Python function. Same origin means no CORS settings and a single deploy. If the Python function does not work on Vercel, the backend can move to another host (Render, Railway) without code changes.
 
 ## AI model and prompt
 
@@ -67,7 +71,7 @@ The chain is `prompt | llm | StrOutputParser()`.
 
 Every question follows the same eight steps from the browser to Gemini and back.
 
-1. The user types a question in the chat; the frontend sends `POST /chat` with `session_id`, `question` and the user's Supabase token.
+1. The user types a question in the chat; the frontend sends `POST /api/py/chat` with `session_id`, `question` and the user's Supabase token.
 2. FastAPI verifies the token and checks the question is 1 to 4000 characters.
 3. FastAPI checks the session belongs to that user and loads its last 10 messages from Supabase.
 4. The chain is called with `question` and `history`; `wise_context.md` is already in the system prompt.
@@ -77,7 +81,7 @@ Every question follows the same eight steps from the browser to Gemini and back.
 8. The frontend shows the answer in the chat and keeps the session open for follow-ups.
 
 ```
-Frontend (Next.js on Vercel) --1 POST /chat--> FastAPI backend --4 run chain--> LangChain chain --> Gemini
+Frontend (Next.js on Vercel) --1 POST /api/py/chat--> FastAPI backend --4 run chain--> LangChain chain --> Gemini
                              <--7 answer------                 <--5 answer----
 FastAPI backend <--> Supabase (auth, sessions, messages): 2 verify token, 3 load history, 6 save messages
 ```
@@ -118,17 +122,17 @@ The backend uses the service key and checks session ownership itself, so it must
 
 ## Inputs and outputs
 
-The backend exposes five endpoints; every one except `/health` needs the user's Supabase token as a Bearer header.
+The backend exposes five endpoints under `/api/py`; every one except `/api/py/health` needs the user's Supabase token as a Bearer header.
 
 | Method and path | Purpose |
 |---|---|
-| `POST /sessions` | Create a new incident session |
-| `GET /sessions` | List the user's sessions, newest first |
-| `GET /sessions/{id}/messages` | Return all messages in a session |
-| `POST /chat` | Send a question and get the answer |
-| `GET /health` | Return `{"status": "ok"}` for deploy checks |
+| `POST /api/py/sessions` | Create a new incident session |
+| `GET /api/py/sessions` | List the user's sessions, newest first |
+| `GET /api/py/sessions/{id}/messages` | Return all messages in a session |
+| `POST /api/py/chat` | Send a question and get the answer |
+| `GET /api/py/health` | Return `{"status": "ok"}` for deploy checks |
 
-`POST /chat` request and response:
+`POST /api/py/chat` request and response:
 
 ```jsonc
 // request
@@ -151,14 +155,13 @@ Error cases:
 
 ## Deployment plan
 
-The app goes live in six steps, and Vercel redeploys automatically on every push to GitHub.
+The app goes live in five steps, and Vercel redeploys automatically on every push to GitHub.
 
 1. Push the repository to GitHub, with `docs/PRD.md` and `docs/TRD.md` included.
-2. Create a Supabase project, run the schema SQL and turn on email sign-in.
-3. Deploy the backend and set its environment variables.
-4. Deploy the frontend to Vercel from the `frontend/` folder and set its variables.
-5. Allow the frontend's domain in the backend's CORS settings.
-6. Open the live URL, sign up and run the test plan below.
+2. Create a Supabase project, run `supabase/schema.sql` and turn on email sign-in.
+3. Import the repository into one Vercel project (root directory = repo root) and set all the environment variables below.
+4. In Supabase, set the Site URL to the Vercel URL.
+5. Open the live URL, check `/api/py/health`, sign up and run the test plan below.
 
 Environment variables:
 
@@ -168,10 +171,8 @@ Environment variables:
 | `GEMINI_MODEL` | Backend | Optional; defaults to `gemini-2.5-flash` |
 | `SUPABASE_URL` | Backend | Project URL |
 | `SUPABASE_SERVICE_KEY` | Backend only | Never expose to the browser |
-| `ALLOWED_ORIGINS` | Backend | Comma-separated frontend URLs for CORS (step 5) |
 | `NEXT_PUBLIC_SUPABASE_URL` | Frontend | Project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Frontend | Public anon key |
-| `NEXT_PUBLIC_API_URL` | Frontend | Backend URL |
 
 ## Test plan
 

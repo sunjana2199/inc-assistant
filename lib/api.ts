@@ -1,6 +1,7 @@
 import { supabase } from "./supabase";
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
+// Same origin: on Vercel, /api/py/* is the FastAPI function; locally Next.js forwards it to port 8000.
+const API_URL = "/api/py";
 
 export type Session = { id: string; title: string | null; created_at: string };
 export type Message = { id?: number; role: "user" | "assistant"; content: string; created_at?: string };
