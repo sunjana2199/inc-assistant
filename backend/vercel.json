@@ -1,0 +1,10 @@
+{
+  "builds": [
+    {
+      "src": "main.py",
+      "use": "@vercel/python",
+      "config": { "includeFiles": ["wise_context.md", "chain.py", "history.py", "auth.py", "db.py"] }
+    }
+  ],
+  "routes": [{ "src": "/(.*)", "dest": "main.py" }]
+}
